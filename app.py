@@ -28,8 +28,8 @@ RESET_INTERVAL_SECONDS = 900  # Reset DB every 15 minutes
 app = Flask(__name__)
 # Enable CORS for Vercel frontend (restrict in production if needed)
 CORS(app, origins=[
-    "https://your-frontend.vercel.app",     # Replace with your actual Vercel domain
-    "http://localhost:3000",                # For local development
+    "https://your-frontend.vercel.app",   # Replace with your actual Vercel domain
+    "http://localhost:3000",              # For local development
 ])
 
 # --- Database Initialization ---
@@ -40,7 +40,7 @@ def setup_database():
         os.remove(DB_FILE)
         print("🗑️  Removed existing database file.")
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, check_same_thread=False)
     cursor = conn.cursor()
 
     # Create table
@@ -96,7 +96,7 @@ def data_injector():
                 print(f"📈 Injecting normal reading: {value:.2f}")
 
             # Insert into DB
-            conn = sqlite3.connect(DB_FILE)
+            conn = sqlite3.connect(DB_FILE, check_same_thread=False)
             conn.execute(f"INSERT INTO {TABLE_NAME} (sensor_value) VALUES (?)", (value,))
             conn.commit()
             conn.close()
@@ -112,7 +112,7 @@ def validator_loop():
     print("🔍 Validator thread started.")
     while True:
         try:
-            conn = sqlite3.connect(DB_FILE)
+            conn = sqlite3.connect(DB_FILE, check_same_thread=False)
             df = pd.read_sql_query(
                 f"SELECT id, sensor_value FROM {TABLE_NAME} WHERE is_valid IS NULL",
                 conn
@@ -140,7 +140,7 @@ def validator_loop():
 def dashboard_data():
     """Return summary stats and latest anomalies for the frontend."""
     try:
-        conn = sqlite3.connect(DB_FILE)
+        conn = sqlite3.connect(DB_FILE, check_same_thread=False)
 
         # Fetch summary stats
         stats_query = f"""
@@ -182,20 +182,27 @@ def dashboard_data():
 # --- Startup Hook (for production) ---
 def start_background_threads():
     """Start injector and validator threads once."""
+    # Check if threads are already running to avoid duplicates
     if not any("injector" in t.name for t in threading.enumerate()):
+        print("Starting data injector thread...")
         threading.Thread(target=data_injector, daemon=True, name="injector").start()
     if not any("validator" in t.name for t in threading.enumerate()):
+        print("Starting validator thread...")
         threading.Thread(target=validator_loop, daemon=True, name="validator").start()
 
-# --- Initialize on first request (Render-safe) ---
-@app.before_first_request
-def initialize_on_startup():
-    setup_database()
-    start_background_threads()
+# --- Application Initialization ---
+# This code runs ONCE when the application module is imported
+# (both for local dev and for production servers like Gunicorn on Render).
+# This replaces the deprecated `@app.first_request_hook`.
+print("🚀 Initializing database and starting background threads...")
+setup_database()
+start_background_threads()
+print("✅ Application initialized.")
 
 # --- Main entry (for local dev) ---
 if __name__ == "__main__":
-    setup_database()
-    start_background_threads()
+    # The init functions are already called above.
+    # This block is now only for running the local Flask dev server.
+    print(f"--- Running local development server ---")
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
